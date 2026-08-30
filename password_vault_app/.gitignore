@@ -16,6 +16,21 @@ pubspec.lock
 # Local database (never commit real vault data)
 *.db
 
+# Signing keys (NEVER commit these — anyone with these can sign fake
+# updates to your app; keep them only on your own machine)
+android/key.properties
+**/*.keystore
+**/*.jks
+*.p12
+
+# Google OAuth Desktop credentials (kept out of the repo, see
+# google_auth_config.example.dart for the template)
+lib/features/auth/google_auth_config.dart
+
+# Machine-specific, not portable across computers
+android/local.properties
+**/android/local.properties
+
 # Platform build outputs
 android/app/debug
 android/app/profile

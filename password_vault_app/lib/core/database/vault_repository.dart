@@ -1,49 +1,72 @@
+import 'package:flutter/foundation.dart' show debugPrint;
 import 'package:cryptography/cryptography.dart';
+import 'package:uuid/uuid.dart';
 import '../encryption/vault_cipher.dart';
 import '../models/vault_entry.dart';
 import 'database_helper.dart';
+import 'sync_queue_service.dart';
 
-/// The only place in the app that talks to the database directly.
-/// Every write encrypts username/password/notes first; every read
-/// decrypts them before handing a [VaultEntry] back to the UI.
-///
-/// [_cipher] is built from the session's derived key (see
-/// MasterPasswordService.unlock) — it lives only in memory, never on disk.
 class VaultRepository {
   final VaultCipher _cipher;
+  static const _uuid = Uuid();
 
   VaultRepository(SecretKey sessionKey) : _cipher = VaultCipher(sessionKey);
 
-  Future<int> addEntry(VaultEntry entry) async {
+  Future<String> addEntry(VaultEntry entry) async {
     final db = await DatabaseHelper.database;
+    final id = entry.id ?? _uuid.v4();
 
     final row = {
+      'id': id,
       'label': entry.label,
       'url': entry.url,
       'username_encrypted': await _cipher.encrypt(entry.username),
       'password_encrypted': await _cipher.encrypt(entry.password),
-      'notes_encrypted': entry.notes != null ? await _cipher.encrypt(entry.notes!) : null,
+      'notes_encrypted':
+          entry.notes != null ? await _cipher.encrypt(entry.notes!) : null,
       'created_at': entry.createdAt.toIso8601String(),
       'updated_at': entry.updatedAt.toIso8601String(),
       'last_password_change': entry.lastPasswordChange.toIso8601String(),
     };
 
-    return db.insert('vault_entries', row);
+    // Local save happens FIRST and unconditionally — this must succeed
+    // regardless of internet access. The cloud push is queued
+    // separately (see SyncQueueService) and retried automatically
+    // later (on unlock, on pull-to-refresh) if it can't go through
+    // right now.
+    await db.insert('vault_entries', row);
+    await SyncQueueService.enqueueUpsert(id, row);
+    await SyncQueueService
+        .flushPendingChanges(); // best-effort, doesn't block on failure
+
+    return id;
   }
 
   Future<List<VaultEntry>> getAllEntries() async {
     final db = await DatabaseHelper.database;
     final rows = await db.query('vault_entries', orderBy: 'label ASC');
 
+    debugPrint(
+        '*** VaultRepository.getAllEntries: db.query returned ${rows.length} raw rows ***');
+
     final entries = <VaultEntry>[];
     for (final row in rows) {
-      entries.add(await _rowToEntry(row));
+      try {
+        entries.add(await _rowToEntry(row));
+      } catch (e) {
+        // If a single entry fails to decrypt (e.g. wrong key), skip
+        // just that one and keep going instead of losing the whole list.
+        debugPrint(
+            '*** VaultRepository.getAllEntries: FAILED to decrypt row id=${row['id']} label=${row['label']}: $e ***');
+      }
     }
+
+    debugPrint(
+        '*** VaultRepository.getAllEntries: returning ${entries.length} successfully-decrypted entries ***');
+
     return entries;
   }
 
-  /// Entries whose password is 30+ days old — surfaced on the dashboard
-  /// as "needs rotation" per your monthly password change requirement.
   Future<List<VaultEntry>> getEntriesDueForRotation() async {
     final all = await getAllEntries();
     return all.where((e) => e.isPasswordDueForRotation).toList();
@@ -53,17 +76,21 @@ class VaultRepository {
     final db = await DatabaseHelper.database;
 
     final passwordChanged = await _hasPasswordChanged(entry);
+    final updatedAt = DateTime.now().toIso8601String();
+    final lastPasswordChange = passwordChanged
+        ? updatedAt
+        : entry.lastPasswordChange.toIso8601String();
 
     final row = {
+      'id': entry.id,
       'label': entry.label,
       'url': entry.url,
       'username_encrypted': await _cipher.encrypt(entry.username),
       'password_encrypted': await _cipher.encrypt(entry.password),
-      'notes_encrypted': entry.notes != null ? await _cipher.encrypt(entry.notes!) : null,
-      'updated_at': DateTime.now().toIso8601String(),
-      'last_password_change': passwordChanged
-          ? DateTime.now().toIso8601String()
-          : entry.lastPasswordChange.toIso8601String(),
+      'notes_encrypted':
+          entry.notes != null ? await _cipher.encrypt(entry.notes!) : null,
+      'updated_at': updatedAt,
+      'last_password_change': lastPasswordChange,
     };
 
     await db.update(
@@ -72,11 +99,38 @@ class VaultRepository {
       where: 'id = ?',
       whereArgs: [entry.id],
     );
+
+    // The cloud copy needs the full row (Firestore doesn't merge partial
+    // updates the way this local UPDATE does), so include created_at
+    // here even though the local UPDATE statement above doesn't touch it.
+    await SyncQueueService.enqueueUpsert(entry.id!, {
+      ...row,
+      'created_at': entry.createdAt.toIso8601String(),
+    });
+    await SyncQueueService.flushPendingChanges();
   }
 
-  Future<void> deleteEntry(int id) async {
+  Future<void> deleteEntry(String id) async {
     final db = await DatabaseHelper.database;
     await db.delete('vault_entries', where: 'id = ?', whereArgs: [id]);
+    await SyncQueueService.enqueueDelete(id);
+    await SyncQueueService.flushPendingChanges();
+  }
+
+  Future<void> deleteMultiple(List<String> ids) async {
+    if (ids.isEmpty) return;
+    final db = await DatabaseHelper.database;
+    final placeholders = List.filled(ids.length, '?').join(',');
+    await db.delete(
+      'vault_entries',
+      where: 'id IN ($placeholders)',
+      whereArgs: ids,
+    );
+
+    for (final id in ids) {
+      await SyncQueueService.enqueueDelete(id);
+    }
+    await SyncQueueService.flushPendingChanges();
   }
 
   Future<bool> _hasPasswordChanged(VaultEntry updatedEntry) async {
@@ -88,13 +142,14 @@ class VaultRepository {
     );
     if (rows.isEmpty) return true;
 
-    final oldPassword = await _cipher.decrypt(rows.first['password_encrypted'] as String);
+    final oldPassword =
+        await _cipher.decrypt(rows.first['password_encrypted'] as String);
     return oldPassword != updatedEntry.password;
   }
 
   Future<VaultEntry> _rowToEntry(Map<String, dynamic> row) async {
     return VaultEntry(
-      id: row['id'] as int,
+      id: row['id'] as String,
       label: row['label'] as String,
       url: row['url'] as String?,
       username: await _cipher.decrypt(row['username_encrypted'] as String),
@@ -108,9 +163,5 @@ class VaultRepository {
     );
   }
 
-  /// Re-encrypts every entry with a new key. Call this right after
-  /// MasterPasswordService.changeMasterPassword succeeds, passing in
-  /// a repository built from the OLD key to read, and one from the
-  /// NEW key to write — see README for the full flow.
   Future<List<VaultEntry>> exportAllDecrypted() => getAllEntries();
 }

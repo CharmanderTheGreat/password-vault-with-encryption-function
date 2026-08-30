@@ -1,0 +1,25 @@
+name: url_launcher_windows
+description: >
+  Pure-Dart replacement for the official url_launcher_windows plugin,
+  which has a long-standing native (C++) build bug on current
+  toolchains (ShellExecuteW being passed a narrow string where a wide
+  string is required). This package opens URLs through a plain OS shell
+  call instead, so no native code is compiled at all.
+version: 1.0.0
+publish_to: 'none'
+
+environment:
+  sdk: '>=3.0.0 <4.0.0'
+  flutter: ">=3.3.0"
+
+flutter:
+  plugin:
+    implements: url_launcher
+    platforms:
+      windows:
+        dartPluginClass: UrlLauncherWindowsDart
+
+dependencies:
+  flutter:
+    sdk: flutter
+  url_launcher_platform_interface: any

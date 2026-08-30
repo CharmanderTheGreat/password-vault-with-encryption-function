@@ -30,7 +30,7 @@ class StrengthCalculator {
       return PasswordStrengthResult(
         entropyBits: 0,
         level: StrengthLevel.veryWeak,
-        label: 'Walang laman',
+        label: 'Empty',
         estimatedCrackTimeOffline: Duration.zero,
       );
     }
@@ -71,15 +71,15 @@ class StrengthCalculator {
   static String _labelForLevel(StrengthLevel level) {
     switch (level) {
       case StrengthLevel.veryWeak:
-        return 'Napaka-hina — mabilis lang ma-guess';
+        return 'Very weak, easily guessed';
       case StrengthLevel.weak:
-        return 'Mahina — dagdagan pa ang haba/variety';
+        return 'Weak, add more length or variety';
       case StrengthLevel.fair:
-        return 'Sakto lang — pwede pang patibayin';
+        return 'Fair, could be stronger';
       case StrengthLevel.strong:
-        return 'Malakas';
+        return 'Strong';
       case StrengthLevel.veryStrong:
-        return 'Sobrang lakas';
+        return 'Very strong';
     }
   }
 

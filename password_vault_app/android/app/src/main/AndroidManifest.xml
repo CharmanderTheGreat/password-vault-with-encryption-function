@@ -1,6 +1,6 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
     <application
-        android:label="password_vault_app"
+        android:label="Grand Vault"
         android:name="${applicationName}"
         android:icon="@mipmap/ic_launcher">
         <activity

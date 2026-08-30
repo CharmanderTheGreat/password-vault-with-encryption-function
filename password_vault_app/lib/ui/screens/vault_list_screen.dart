@@ -1,8 +1,17 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
+import '../../core/utils/app_launcher.dart';
+import 'package:file_picker/file_picker.dart';
 import '../../core/models/vault_entry.dart';
+import '../../core/database/vault_sync_service.dart';
+import '../../core/database/sync_queue_service.dart';
 import '../../core/session/vault_session.dart';
+import '../../core/theme/theme_controller.dart';
+import '../../features/import_export/csv_import_service.dart';
+import '../../features/import_export/csv_export_service.dart';
+import '../../main.dart' show VaultColors;
 import 'add_edit_entry_screen.dart';
+import 'settings_screen.dart';
 import 'unlock_screen.dart';
 
 class VaultListScreen extends StatefulWidget {
@@ -14,23 +23,68 @@ class VaultListScreen extends StatefulWidget {
 
 class _VaultListScreenState extends State<VaultListScreen> {
   List<VaultEntry> _entries = [];
+  List<VaultEntry> _filtered = [];
   bool _loading = true;
+  final _searchController = TextEditingController();
+
+  bool _selectionMode = false;
+  final Set<String> _selectedIds = {};
 
   @override
   void initState() {
     super.initState();
     _loadEntries();
+    _searchController.addListener(_applyFilter);
+  }
+
+  void _applyFilter() {
+    final query = _searchController.text.toLowerCase();
+    setState(() {
+      _filtered = query.isEmpty
+          ? _entries
+          : _entries
+              .where((e) =>
+                  e.label.toLowerCase().contains(query) ||
+                  e.username.toLowerCase().contains(query))
+              .toList();
+    });
   }
 
   Future<void> _loadEntries() async {
+    // If sign-out happened while this screen was still around (e.g. the
+    // user signed out from Settings, which fully clears the session and
+    // navigates away), the repository is gone. This screen itself is
+    // about to be removed from the stack, so just skip the reload
+    // instead of crashing on the null check.
+    final repo = context.read<VaultSession>().repository;
+    if (repo == null) return;
+
     setState(() => _loading = true);
-    final repo = context.read<VaultSession>().repository!;
     final entries = await repo.getAllEntries();
     if (!mounted) return;
     setState(() {
       _entries = entries;
+      _filtered = entries;
       _loading = false;
     });
+  }
+
+  /// Used by pull-to-refresh: a full two-way sync, not just a local
+  /// re-read. Pushes any changes still waiting in the local outbox
+  /// (e.g. made while offline), pulls anything added on other devices,
+  /// then reloads the list from local storage.
+  Future<void> _syncAndReload() async {
+    try {
+      await SyncQueueService.flushPendingChanges();
+    } catch (_) {
+      // Ignore — likely offline, will retry on next unlock/refresh.
+    }
+    try {
+      await VaultSyncService.pullFromCloud();
+    } catch (_) {
+      // Ignore — local data is still usable.
+    }
+    await _loadEntries();
   }
 
   void _lockVault() {
@@ -41,55 +95,359 @@ class _VaultListScreenState extends State<VaultListScreen> {
     );
   }
 
+  void _openSettings() async {
+    await Navigator.of(context).push(
+      MaterialPageRoute(
+          builder: (_) => SettingsScreen(onDataChanged: _loadEntries)),
+    );
+    if (!mounted) return;
+    _loadEntries();
+  }
+
   int get _dueForRotationCount =>
       _entries.where((e) => e.isPasswordDueForRotation).length;
 
-  @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(
-        title: const Text('Aking Vault'),
+  void _enterSelectionMode(String id) {
+    setState(() {
+      _selectionMode = true;
+      _selectedIds.add(id);
+    });
+  }
+
+  void _toggleSelection(String id) {
+    setState(() {
+      if (_selectedIds.contains(id)) {
+        _selectedIds.remove(id);
+      } else {
+        _selectedIds.add(id);
+      }
+      if (_selectedIds.isEmpty) _selectionMode = false;
+    });
+  }
+
+  void _selectAll() {
+    setState(() {
+      _selectionMode = true;
+      _selectedIds
+        ..clear()
+        ..addAll(_filtered.map((e) => e.id!));
+    });
+  }
+
+  void _exitSelectionMode() {
+    setState(() {
+      _selectionMode = false;
+      _selectedIds.clear();
+    });
+  }
+
+  Future<void> _deleteSelected() async {
+    final count = _selectedIds.length;
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Text('Delete $count account${count > 1 ? 's' : ''}?'),
+        content: const Text('This action cannot be undone.'),
         actions: [
-          IconButton(
-            icon: const Icon(Icons.lock_outline),
-            tooltip: 'I-lock ang vault',
-            onPressed: _lockVault,
-          ),
+          TextButton(
+              onPressed: () => Navigator.pop(context, false),
+              child: const Text('Cancel')),
+          TextButton(
+              onPressed: () => Navigator.pop(context, true),
+              child: const Text('Delete')),
         ],
       ),
+    );
+
+    if (confirmed != true) return;
+
+    final repo = context.read<VaultSession>().repository!;
+    await repo.deleteMultiple(_selectedIds.toList());
+    _exitSelectionMode();
+    _loadEntries();
+  }
+
+  Future<void> _openUrl(String url) async {
+    var normalized = url.trim();
+    if (!normalized.startsWith('http://') &&
+        !normalized.startsWith('https://')) {
+      normalized = 'https://$normalized';
+    }
+    final uri = Uri.tryParse(normalized);
+    if (uri == null) return;
+
+    final launched = await AppLauncher.openUrl(uri.toString());
+    if (!launched && mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+            content: Text(
+                'Could not open the link. Check your internet connection.')),
+      );
+    }
+  }
+
+  Future<void> _importFromCsv() async {
+    final result = await FilePicker.platform.pickFiles(
+      type: FileType.custom,
+      allowedExtensions: ['csv'],
+      dialogTitle: 'Select browser password export (.csv)',
+    );
+
+    if (result == null || result.files.single.path == null) return;
+
+    List<VaultEntry> imported;
+    try {
+      imported = await CsvImportService.parseFile(result.files.single.path!);
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+            content:
+                Text('Import failed: ${e is FormatException ? e.message : e}')),
+      );
+      return;
+    }
+
+    if (imported.isEmpty) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('No valid entries found in that file.')),
+      );
+      return;
+    }
+
+    if (!mounted) return;
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Import accounts?'),
+        content: Text(
+          'Found ${imported.length} account${imported.length > 1 ? 's' : ''} in this file. '
+          'They\'ll be added to your vault and encrypted immediately. '
+          'Delete the CSV file afterward, it\'s stored as plain text by your browser.',
+        ),
+        actions: [
+          TextButton(
+              onPressed: () => Navigator.pop(context, false),
+              child: const Text('Cancel')),
+          TextButton(
+              onPressed: () => Navigator.pop(context, true),
+              child: const Text('Import')),
+        ],
+      ),
+    );
+
+    if (confirmed != true) return;
+
+    final repo = context.read<VaultSession>().repository!;
+    for (final entry in imported) {
+      await repo.addEntry(entry);
+    }
+
+    _loadEntries();
+
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+          content: Text(
+              'Imported ${imported.length} account${imported.length > 1 ? 's' : ''}.')),
+    );
+  }
+
+  Future<void> _exportToCsv() async {
+    if (_entries.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('No accounts to export yet.')),
+      );
+      return;
+    }
+
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Export vault as CSV?'),
+        content: Text(
+          'This creates a plain-text file with all ${_entries.length} of your '
+          'saved passwords, unencrypted, same as a browser password export. '
+          'Store it somewhere safe and delete it when you\'re done.',
+        ),
+        actions: [
+          TextButton(
+              onPressed: () => Navigator.pop(context, false),
+              child: const Text('Cancel')),
+          TextButton(
+              onPressed: () => Navigator.pop(context, true),
+              child: const Text('Continue')),
+        ],
+      ),
+    );
+
+    if (confirmed != true) return;
+
+    final savePath = await FilePicker.platform.saveFile(
+      dialogTitle: 'Save vault export',
+      fileName: 'vault_export.csv',
+      type: FileType.custom,
+      allowedExtensions: ['csv'],
+    );
+
+    if (savePath == null) return;
+
+    final path =
+        savePath.toLowerCase().endsWith('.csv') ? savePath : '$savePath.csv';
+    await CsvExportService.exportToFile(_entries, path);
+
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text('Exported ${_entries.length} accounts to $path')),
+    );
+  }
+
+  void _showAbout() {
+    showAboutDialog(
+      context: context,
+      applicationName: 'Password Vault',
+      applicationVersion: '1.0.0',
+      children: const [
+        Padding(
+          padding: EdgeInsets.only(top: 8),
+          child: Text(
+              'Offline, encrypted password manager. AES-256-GCM + Argon2id. No network access, ever.'),
+        ),
+      ],
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = Theme.of(context).extension<VaultColors>()!;
+    final themeController = context.watch<ThemeController>();
+
+    return Scaffold(
+      appBar: _selectionMode
+          ? AppBar(
+              leading: IconButton(
+                icon: const Icon(Icons.close),
+                onPressed: _exitSelectionMode,
+              ),
+              title: Text('${_selectedIds.length} selected'),
+              actions: [
+                IconButton(
+                  icon: const Icon(Icons.select_all),
+                  tooltip: 'Select all',
+                  onPressed: _selectAll,
+                ),
+                IconButton(
+                  icon: Icon(Icons.delete_outline, color: colors.danger),
+                  tooltip: 'Delete selected',
+                  onPressed: _selectedIds.isEmpty ? null : _deleteSelected,
+                ),
+              ],
+            )
+          : AppBar(
+              title: const Text('My Vault'),
+              actions: [
+                IconButton(
+                  icon: AnimatedSwitcher(
+                    duration: const Duration(milliseconds: 300),
+                    transitionBuilder: (child, animation) => RotationTransition(
+                      turns: animation,
+                      child: ScaleTransition(scale: animation, child: child),
+                    ),
+                    child: Icon(
+                      themeController.mode == ThemeMode.dark
+                          ? Icons.dark_mode_outlined
+                          : Icons.light_mode_outlined,
+                      key: ValueKey(themeController.mode),
+                    ),
+                  ),
+                  tooltip: 'Toggle dark / light mode',
+                  onPressed: themeController.toggle,
+                ),
+                IconButton(
+                  icon: const Icon(Icons.settings_outlined),
+                  tooltip: 'Settings',
+                  onPressed: _openSettings,
+                ),
+                IconButton(
+                  icon: const Icon(Icons.lock_outline),
+                  tooltip: 'Lock vault',
+                  onPressed: _lockVault,
+                ),
+                const SizedBox(width: 8),
+              ],
+            ),
       body: _loading
           ? const Center(child: CircularProgressIndicator())
           : RefreshIndicator(
-              onRefresh: _loadEntries,
+              onRefresh: _syncAndReload,
               child: Column(
                 children: [
-                  if (_dueForRotationCount > 0) _RotationBanner(count: _dueForRotationCount),
+                  if (!_selectionMode)
+                    Padding(
+                      padding: const EdgeInsets.fromLTRB(16, 12, 16, 8),
+                      child: TextField(
+                        controller: _searchController,
+                        decoration: InputDecoration(
+                          hintText: 'Search accounts...',
+                          prefixIcon: Icon(Icons.search,
+                              color: colors.textSecondary, size: 20),
+                          isDense: true,
+                        ),
+                      ),
+                    ),
+                  if (_dueForRotationCount > 0 && !_selectionMode)
+                    Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 16),
+                      child: _RotationBanner(count: _dueForRotationCount),
+                    ),
+                  if (_selectionMode)
+                    Padding(
+                      padding: const EdgeInsets.fromLTRB(16, 12, 16, 4),
+                      child: Row(
+                        children: [
+                          Icon(Icons.info_outline,
+                              size: 16, color: colors.textSecondary),
+                          const SizedBox(width: 6),
+                          Text(
+                            'Tap accounts to select more',
+                            style: TextStyle(
+                                fontSize: 12, color: colors.textSecondary),
+                          ),
+                        ],
+                      ),
+                    ),
                   Expanded(
-                    child: _entries.isEmpty
-                        ? const Center(
-                            child: Text('Wala pang naka-save na account. Mag-dagdag ka!'),
-                          )
-                        : ListView.builder(
-                            itemCount: _entries.length,
-                            itemBuilder: (context, index) {
-                              final entry = _entries[index];
-                              return ListTile(
-                                leading: CircleAvatar(
-                                  child: Text(entry.label.isNotEmpty ? entry.label[0].toUpperCase() : '?'),
-                                ),
-                                title: Text(entry.label),
-                                subtitle: Text(entry.username),
-                                trailing: entry.isPasswordDueForRotation
-                                    ? const Icon(Icons.warning_amber, color: Colors.orange)
-                                    : null,
-                                onTap: () async {
-                                  await Navigator.of(context).push(
-                                    MaterialPageRoute(
-                                      builder: (_) => AddEditEntryScreen(entry: entry),
-                                    ),
-                                  );
-                                  _loadEntries();
-                                },
+                    child: _filtered.isEmpty
+                        ? _EmptyState(
+                            hasSearch: _searchController.text.isNotEmpty)
+                        : LayoutBuilder(
+                            builder: (context, constraints) {
+                              final wide = constraints.maxWidth > 700;
+                              if (wide) {
+                                return GridView.builder(
+                                  padding:
+                                      const EdgeInsets.fromLTRB(16, 8, 16, 90),
+                                  gridDelegate:
+                                      const SliverGridDelegateWithMaxCrossAxisExtent(
+                                    maxCrossAxisExtent: 480,
+                                    mainAxisExtent: 76,
+                                    crossAxisSpacing: 12,
+                                    mainAxisSpacing: 12,
+                                  ),
+                                  itemCount: _filtered.length,
+                                  itemBuilder: (context, index) =>
+                                      _buildCard(_filtered[index]),
+                                );
+                              }
+                              return ListView.separated(
+                                padding:
+                                    const EdgeInsets.fromLTRB(16, 8, 16, 90),
+                                itemCount: _filtered.length,
+                                separatorBuilder: (_, __) =>
+                                    const SizedBox(height: 8),
+                                itemBuilder: (context, index) =>
+                                    _buildCard(_filtered[index]),
                               );
                             },
                           ),
@@ -97,14 +455,154 @@ class _VaultListScreenState extends State<VaultListScreen> {
                 ],
               ),
             ),
-      floatingActionButton: FloatingActionButton(
-        onPressed: () async {
-          await Navigator.of(context).push(
-            MaterialPageRoute(builder: (_) => const AddEditEntryScreen()),
-          );
-          _loadEntries();
-        },
-        child: const Icon(Icons.add),
+      floatingActionButton: _selectionMode
+          ? null
+          : FloatingActionButton.extended(
+              onPressed: () async {
+                await Navigator.of(context).push(
+                  MaterialPageRoute(builder: (_) => const AddEditEntryScreen()),
+                );
+                _loadEntries();
+              },
+              icon: const Icon(Icons.add),
+              label: const Text('Add Account'),
+            ),
+    );
+  }
+
+  Widget _buildCard(VaultEntry entry) {
+    final isSelected = _selectedIds.contains(entry.id);
+    return _EntryCard(
+      entry: entry,
+      selectionMode: _selectionMode,
+      selected: isSelected,
+      onTap: () {
+        if (_selectionMode) {
+          _toggleSelection(entry.id!);
+          return;
+        }
+        if (entry.url != null && entry.url!.isNotEmpty) {
+          _openUrl(entry.url!);
+        }
+      },
+      onLongPress: () {
+        if (!_selectionMode) _enterSelectionMode(entry.id!);
+      },
+      onEdit: () async {
+        await Navigator.of(context).push(
+          MaterialPageRoute(builder: (_) => AddEditEntryScreen(entry: entry)),
+        );
+        _loadEntries();
+      },
+      hasUrl: entry.url != null && entry.url!.isNotEmpty,
+    );
+  }
+}
+
+class _EntryCard extends StatelessWidget {
+  final VaultEntry entry;
+  final bool selectionMode;
+  final bool selected;
+  final VoidCallback onTap;
+  final VoidCallback onLongPress;
+  final VoidCallback onEdit;
+  final bool hasUrl;
+
+  const _EntryCard({
+    required this.entry,
+    required this.selectionMode,
+    required this.selected,
+    required this.onTap,
+    required this.onLongPress,
+    required this.onEdit,
+    required this.hasUrl,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = Theme.of(context).extension<VaultColors>()!;
+
+    return Material(
+      color: selected ? colors.accent.withValues(alpha: 0.12) : colors.surface,
+      borderRadius: BorderRadius.circular(14),
+      child: InkWell(
+        onTap: onTap,
+        onLongPress: onLongPress,
+        borderRadius: BorderRadius.circular(14),
+        child: Container(
+          padding: const EdgeInsets.all(14),
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(14),
+            border: Border.all(
+              color: selected ? colors.accent : colors.surfaceVariant,
+              width: selected ? 1.5 : 1,
+            ),
+          ),
+          child: Row(
+            children: [
+              if (selectionMode) ...[
+                Icon(
+                  selected ? Icons.check_circle : Icons.circle_outlined,
+                  color: selected ? colors.accent : colors.textSecondary,
+                  size: 22,
+                ),
+                const SizedBox(width: 12),
+              ],
+              if (!selectionMode)
+                Container(
+                  width: 44,
+                  height: 44,
+                  alignment: Alignment.center,
+                  decoration: BoxDecoration(
+                    color: colors.accent.withValues(alpha: 0.15),
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  child: Text(
+                    entry.label.isNotEmpty ? entry.label[0].toUpperCase() : '?',
+                    style: TextStyle(
+                        color: colors.accent,
+                        fontWeight: FontWeight.w700,
+                        fontSize: 18),
+                  ),
+                ),
+              const SizedBox(width: 14),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    Text(
+                      entry.label,
+                      style: TextStyle(
+                        color: colors.textPrimary,
+                        fontWeight: FontWeight.w600,
+                        fontSize: 15,
+                      ),
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                    const SizedBox(height: 2),
+                    Text(
+                      entry.username,
+                      style:
+                          TextStyle(color: colors.textSecondary, fontSize: 13),
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ],
+                ),
+              ),
+              if (!selectionMode)
+                IconButton(
+                  icon:
+                      Icon(Icons.edit_outlined, color: colors.accent, size: 20),
+                  tooltip: 'Edit',
+                  onPressed: onEdit,
+                ),
+              if (!selectionMode && entry.isPasswordDueForRotation)
+                Icon(Icons.warning_amber_rounded,
+                    color: colors.warning, size: 20),
+            ],
+          ),
+        ),
       ),
     );
   }
@@ -116,21 +614,67 @@ class _RotationBanner extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final colors = Theme.of(context).extension<VaultColors>()!;
+
     return Container(
       width: double.infinity,
-      color: Colors.orange.shade100,
+      margin: const EdgeInsets.only(bottom: 10),
       padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: colors.warning.withValues(alpha: 0.12),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: colors.warning.withValues(alpha: 0.3)),
+      ),
       child: Row(
         children: [
-          const Icon(Icons.warning_amber, color: Colors.orange),
-          const SizedBox(width: 8),
+          Icon(Icons.warning_amber_rounded, color: colors.warning, size: 20),
+          const SizedBox(width: 10),
           Expanded(
             child: Text(
-              '$count account(s) na overdue na para baguhin ang password (30+ araw na).',
-              style: const TextStyle(fontSize: 13),
+              '$count account${count > 1 ? 's' : ''} overdue for a password change (30+ days old)',
+              style: TextStyle(fontSize: 13, color: colors.textPrimary),
             ),
           ),
         ],
+      ),
+    );
+  }
+}
+
+class _EmptyState extends StatelessWidget {
+  final bool hasSearch;
+  const _EmptyState({required this.hasSearch});
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = Theme.of(context).extension<VaultColors>()!;
+
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.all(32),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(
+              hasSearch ? Icons.search_off : Icons.inbox_outlined,
+              size: 48,
+              color: colors.textSecondary,
+            ),
+            const SizedBox(height: 16),
+            Text(
+              hasSearch ? 'No matching accounts' : 'No saved accounts yet',
+              style: TextStyle(color: colors.textSecondary, fontSize: 15),
+            ),
+            if (!hasSearch) ...[
+              const SizedBox(height: 6),
+              Text(
+                'Tap "Add Account" to save your first credential',
+                style: TextStyle(color: colors.textSecondary, fontSize: 13),
+                textAlign: TextAlign.center,
+              ),
+            ],
+          ],
+        ),
       ),
     );
   }

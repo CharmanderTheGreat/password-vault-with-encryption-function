@@ -3,9 +3,9 @@
 /// in the database — this model just carries the data around in memory
 /// after it has already been decrypted (or before it's encrypted).
 class VaultEntry {
-  final int? id;
-  final String label; // e.g. "Facebook", "GCash", "GitHub"
-  final String? url; // optional, e.g. "https://facebook.com"
+  final String? id;
+  final String label;
+  final String? url;
   final String username;
   final String password;
   final String? notes;
@@ -27,15 +27,14 @@ class VaultEntry {
         updatedAt = updatedAt ?? DateTime.now(),
         lastPasswordChange = lastPasswordChange ?? DateTime.now();
 
-  /// True if this password is 30+ days old and due for rotation,
-  /// matching the "change password monthly" requirement.
   bool get isPasswordDueForRotation {
-    final daysSinceChange = DateTime.now().difference(lastPasswordChange).inDays;
+    final daysSinceChange =
+        DateTime.now().difference(lastPasswordChange).inDays;
     return daysSinceChange >= 30;
   }
 
   VaultEntry copyWith({
-    int? id,
+    String? id,
     String? label,
     String? url,
     String? username,

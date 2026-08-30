@@ -1,39 +1,91 @@
-name: password_vault_app
-description: Offline, encrypted password manager (mobile + desktop) built with Flutter.
-publish_to: 'none'
-version: 1.0.0+1
+  name: password_vault_app
+  description: Offline, encrypted password manager (mobile + desktop) built with Flutter.
+  publish_to: 'none'
+  version: 1.0.0+1
 
-environment:
-  sdk: '>=3.0.0 <4.0.0'
+  environment:
+    sdk: '>=3.0.0 <4.0.0'
 
-dependencies:
+  dependencies:
+    flutter:
+      sdk: flutter
+    cupertino_icons: ^1.0.6
+
+    # Local storage (offline only, no network calls)
+    sqflite: ^2.3.3+1
+    sqflite_common_ffi: ^2.3.3      # needed for desktop (Windows/Linux/macOS) SQLite support
+    sqlite3_flutter_libs: any       # bundles the native sqlite3.dll/.so/.dylib the FFI plugin needs
+    path_provider: ^2.1.3
+    path: ^1.9.0
+
+    # Encryption
+    cryptography: ^2.7.0            # AES-256-GCM + Argon2id key derivation
+    # (cryptography package is pure-Dart, works on all platforms, no native build step needed)
+
+    # Secure random for password generation & salts
+    # (uses dart:math Random.secure(), no extra package required)
+
+    # State management
+    provider: ^6.1.2
+
+    window_manager: ^0.4.3
+
+    uuid: ^4.4.0
+
+    # Modern, readable typeface (replaces the plain default Roboto)
+    google_fonts: any
+
+    # Stores non-secret metadata (salt, verifier) — NOT the master password itself
+    shared_preferences: ^2.2.3
+
+    # Opens saved URLs in the device's default browser. Uses url_launcher_android
+    # directly (not the url_launcher umbrella package) to avoid pulling in
+    # url_launcher_windows, which has an unresolved native build bug; Windows
+    # is handled with a plain OS call instead, see AppLauncher.
+    url_launcher_android: any
+    url_launcher_platform_interface: any
+
+    # Lets the user pick a CSV file (e.g. browser password export) to import
+    file_picker: 10.3.10
+
+    # Device PIN/biometric authentication for "Quick Unlock"
+    local_auth: ^3.0.2
+
+    # Account sign-in and cloud sync (Firebase)
+    firebase_core: any
+    firebase_auth: any
+    cloud_firestore: any
+    # Works on Android natively, and on Windows/Linux via a system-browser
+    # OAuth flow (google_sign_in itself does not support Windows)
+    google_sign_in_all_platforms: any
+    # Used directly on Android only (see GoogleAuthService), since the
+    # wrapper above can't pass the serverClientId that newer google_sign_in
+    # versions require there
+    google_sign_in: any
+
+  dev_dependencies:
+    flutter_test:
+      sdk: flutter
+    flutter_lints: ^3.0.0
+    flutter_launcher_icons: ^0.14.3
+
+  flutter_launcher_icons:
+    android: true
+    ios: false
+    image_path: "assets/icon/icon.png"
+    windows:
+      generate: true
+      image_path: "assets/icon/icon.png"
+      icon_size: 256
+
   flutter:
-    sdk: flutter
-  cupertino_icons: ^1.0.6
+    uses-material-design: true
+    assets:
+      - assets/icon/icon.png
 
-  # Local storage (offline only, no network calls)
-  sqflite: ^2.3.3+1
-  sqflite_common_ffi: ^2.3.3      # needed for desktop (Windows/Linux/macOS) SQLite support
-  path_provider: ^2.1.3
-  path: ^1.9.0
-
-  # Encryption
-  cryptography: ^2.7.0            # AES-256-GCM + Argon2id key derivation
-  # (cryptography package is pure-Dart, works on all platforms, no native build step needed)
-
-  # Secure random for password generation & salts
-  # (uses dart:math Random.secure(), no extra package required)
-
-  # State management
-  provider: ^6.1.2
-
-  # Stores non-secret metadata (salt, verifier) — NOT the master password itself
-  shared_preferences: ^2.2.3
-
-dev_dependencies:
-  flutter_test:
-    sdk: flutter
-  flutter_lints: ^3.0.0
-
-flutter:
-  uses-material-design: true
+  dependency_overrides:
+    # Real url_launcher_windows fails to compile (native C++ bug, still
+    # unresolved upstream). This substitutes a pure-Dart local replacement
+    # instead, no native code involved. See packages/url_launcher_windows_dart.
+    url_launcher_windows:
+      path: packages/url_launcher_windows_dart
