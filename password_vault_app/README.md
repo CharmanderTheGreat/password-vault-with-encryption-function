@@ -1,103 +1,92 @@
-# Password Vault App
+# Grand Vault
 
-Offline, encrypted password manager — Android, iOS, Windows, Linux, macOS.
-No internet connection is used at any point. No cloud, no sync, no telemetry.
+An offline-first, encrypted password manager built with Flutter. Runs on Android and Windows desktop from a single codebase.
 
 ## Features
 
-- **One master password** unlocks the whole vault (never stored — only a
-  salt + verifier are stored, per industry-standard practice)
-- **AES-256-GCM encryption** for every stored username/password/note
-- **Argon2id key derivation** — makes brute-forcing the master password
-  computationally expensive even if someone steals your device's storage
-- **Password generator** — cryptographically random, customizable length
-  and character sets, so every account gets a genuinely different password
-- **Entropy-based strength meter** — real bit-strength calculation, not a
-  guessed "weak/medium/strong" label
-- **Monthly rotation tracking** — flags any account whose password is
-  30+ days old, right on the dashboard
-- **Auto-lock** — vault re-locks itself after 3 minutes of inactivity or
-  when the app is backgrounded
+- **AES-256-GCM encryption + Argon2id key derivation** — all credentials are encrypted locally before they ever touch disk. No network call is required to unlock or use the vault.
+- **Master password + Quick Unlock** — unlock with your master password, or use device biometrics/PIN via `local_auth` for faster daily access.
+- **Optional cloud account & sync** — sign in with Google to back up and sync your encrypted vault across devices via Firebase/Firestore. Fully optional; the vault works entirely offline without an account.
+- **Explicit per-entry actions** — every saved account has four dedicated controls: copy username, copy password, open the site link, and edit. No ambiguous "tap to auto-login" behavior.
+- **Self-clearing clipboard** — copied credentials automatically clear from the clipboard after 30 seconds, with a live countdown shown in a system notification (visible even outside the app) so you always know when it's safe.
+- **Password rotation reminders** — entries older than 30 days are flagged so stale passwords don't go unnoticed.
+- **CSV import/export** — bring in existing passwords from a browser export, or export your vault as a plain CSV backup.
+- **Dark / light theme** — toggle anytime; layout adapts responsively between a mobile list view and a wide-screen grid view.
 
-## Getting Started
+## Tech stack
 
-You'll need the Flutter SDK installed on your own machine (this was built
-without a live Flutter environment, so **build and test it locally**
-before relying on it):
+| Layer | Choice |
+|---|---|
+| Framework | Flutter (Android + Windows) |
+| Local storage | SQLite (`sqflite` on mobile, `sqflite_common_ffi` on desktop) |
+| Encryption | `cryptography` (pure Dart, AES-256-GCM + Argon2id) |
+| Auth & sync | Firebase Auth, Cloud Firestore, Google Sign-In |
+| Biometrics | `local_auth` |
+| State management | `provider` |
+| Notifications | `flutter_local_notifications` |
+| Desktop window control | `window_manager` |
 
-```bash
-# 1. Install Flutter: https://docs.flutter.dev/get-started/install
-flutter --version   # confirm it's installed
-
-# 2. Get dependencies
-cd password_vault_app
-flutter pub get
-
-# 3. Run on a connected device/emulator
-flutter run
-
-# 4. Build a release APK (Android)
-flutter build apk --release
-
-# 5. Build for desktop (enable the platform first if needed)
-flutter config --enable-windows-desktop   # or --enable-linux-desktop / --enable-macos-desktop
-flutter build windows   # or: flutter build linux / flutter build macos
-```
-
-## Architecture
+## Project structure
 
 ```
 lib/
-├── main.dart                          # entry point, routing, auto-lock enforcement
 ├── core/
-│   ├── encryption/
-│   │   ├── key_derivation.dart        # Argon2id: master password -> AES key
-│   │   └── vault_cipher.dart          # AES-256-GCM encrypt/decrypt
-│   ├── database/
-│   │   ├── database_helper.dart       # SQLite setup (mobile + desktop)
-│   │   └── vault_repository.dart      # CRUD, encrypts/decrypts transparently
-│   ├── models/
-│   │   └── vault_entry.dart           # one saved account
-│   └── session/
-│       └── vault_session.dart         # in-memory unlocked session state
+│   ├── database/        # local SQLite access, sync queue, cloud sync service
+│   ├── encryption/       # AES-256-GCM + Argon2id implementation
+│   ├── models/            # VaultEntry and other data models
+│   ├── session/           # in-memory unlocked vault session
+│   ├── storage/           # non-secret metadata (salt, verifier)
+│   ├── theme/             # app theming, dark/light mode
+│   └── utils/              # app launcher, clipboard cooldown service, etc.
 ├── features/
-│   ├── auth/
-│   │   └── master_password_service.dart  # setup / unlock / change master pass
-│   ├── generator/
-│   │   └── password_generator.dart    # secure random password generator
-│   └── strength_checker/
-│       └── strength_calculator.dart   # entropy + estimated crack time
-└── ui/screens/
-    ├── setup_screen.dart              # first-run: create master password
-    ├── unlock_screen.dart             # every other run: enter master password
-    ├── vault_list_screen.dart         # dashboard: all accounts, rotation warnings
-    └── add_edit_entry_screen.dart     # add/edit an account, generate password
+│   ├── auth/               # master password, Google Sign-In services
+│   └── import_export/      # CSV import/export
+└── ui/
+    ├── screens/            # unlock, setup, vault list, add/edit entry, settings
+    └── widgets/            # shared UI components
 ```
 
-## Important security notes (please read)
+## Getting started
 
-- **There is no password recovery.** If you forget your master password,
-  the vault cannot be decrypted — by design. Nobody, including you, can
-  bypass this. Consider writing your master password down and storing it
-  somewhere physically secure (not digitally) as a backup.
-- **This protects data at rest on your device.** It does not protect you
-  if your device itself is compromised (e.g. malware with root/keylogger
-  access) or if someone watches you type your master password.
-- **Real login-alert monitoring (who logged into your Facebook, from what
-  device/location) is only available from the platforms themselves** —
-  Facebook's "Where You're Logged In," Google's "Your devices," etc. This
-  app can't pull that data since those platforms don't expose it to
-  third-party apps. Enabling 2FA and reviewing those native security pages
-  regularly is still the most effective step you can take there.
-- Before relying on this for real accounts, consider having someone else
-  review the encryption code, and back up the SQLite database file
-  (`vault.db`, found in the app's documents directory) somewhere safe —
-  it's encrypted, so a backup copy is not a security risk by itself.
+1. **Clone the repo**
+   ```
+   git clone https://github.com/CharmanderTheGreat/password-vault-with-encryption-function.git
+   cd password-vault-with-encryption-function
+   ```
 
-## Possible next additions
+2. **Install dependencies**
+   ```
+   flutter pub get
+   ```
 
-- Biometric unlock (fingerprint/Face ID) layered on top of the master password
-- Encrypted export/import (for moving vaults between your own devices)
-- Password breach checking against Have I Been Pwned (would require
-  opting into internet access for that one lookup, using k-anonymity so
-  your actual password is never sent anywhere)
+3. **Firebase setup**
+   This project uses Firebase for optional account sign-in and cloud sync. Firebase config files (`firebase_options.dart`, `google-services.json`) are **not included** in this repo for security — you'll need to create your own Firebase project and generate these via the [FlutterFire CLI](https://firebase.google.com/docs/flutter/setup).
+
+4. **Check available devices**
+   ```
+   flutter devices
+   ```
+   This lists every connected device/emulator along with its device ID.
+
+5. **Run the app**
+   ```
+   flutter run -d windows
+   ```
+   or, for a connected Android device, using the ID from the previous step:
+   ```
+   flutter run -d <device-id>
+   ```
+
+## Security notes
+
+- Master passwords are never stored — only a verifier derived via Argon2id is kept, used to confirm a correct unlock attempt.
+- All vault entries are encrypted at rest with AES-256-GCM before being written to local storage or synced to the cloud.
+- The app makes no network calls unless a Google account is signed in for cloud sync; the vault is fully usable offline.
+
+## Status
+
+Actively in development. Android is the current primary build target; Windows desktop support is also functional.
+
+## License
+
+Not yet specified.
