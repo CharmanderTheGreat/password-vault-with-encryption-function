@@ -11,6 +11,9 @@
       sdk: flutter
     cupertino_icons: ^1.0.6
 
+    # Countdown notification for clipboard auto-clear (Android + Windows)
+    flutter_local_notifications: any
+
     # Local storage (offline only, no network calls)
     sqflite: ^2.3.3+1
     sqflite_common_ffi: ^2.3.3      # needed for desktop (Windows/Linux/macOS) SQLite support

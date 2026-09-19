@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../../core/utils/app_launcher.dart';
+import '../../core/utils/clipboard_cooldown_service.dart';
 import 'package:file_picker/file_picker.dart';
 import '../../core/models/vault_entry.dart';
 import '../../core/database/vault_sync_service.dart';
@@ -477,13 +478,7 @@ class _VaultListScreenState extends State<VaultListScreen> {
       selectionMode: _selectionMode,
       selected: isSelected,
       onTap: () {
-        if (_selectionMode) {
-          _toggleSelection(entry.id!);
-          return;
-        }
-        if (entry.url != null && entry.url!.isNotEmpty) {
-          _openUrl(entry.url!);
-        }
+        if (_selectionMode) _toggleSelection(entry.id!);
       },
       onLongPress: () {
         if (!_selectionMode) _enterSelectionMode(entry.id!);
@@ -494,7 +489,13 @@ class _VaultListScreenState extends State<VaultListScreen> {
         );
         _loadEntries();
       },
-      hasUrl: entry.url != null && entry.url!.isNotEmpty,
+      onCopyUsername: () =>
+          ClipboardCooldownService.copy(entry.username, label: 'Username'),
+      onCopyPassword: () =>
+          ClipboardCooldownService.copy(entry.password, label: 'Password'),
+      onOpenLink: entry.url != null && entry.url!.isNotEmpty
+          ? () => _openUrl(entry.url!)
+          : null,
     );
   }
 }
@@ -506,7 +507,9 @@ class _EntryCard extends StatelessWidget {
   final VoidCallback onTap;
   final VoidCallback onLongPress;
   final VoidCallback onEdit;
-  final bool hasUrl;
+  final VoidCallback onCopyUsername;
+  final VoidCallback onCopyPassword;
+  final VoidCallback? onOpenLink;
 
   const _EntryCard({
     required this.entry,
@@ -515,7 +518,9 @@ class _EntryCard extends StatelessWidget {
     required this.onTap,
     required this.onLongPress,
     required this.onEdit,
-    required this.hasUrl,
+    required this.onCopyUsername,
+    required this.onCopyPassword,
+    required this.onOpenLink,
   });
 
   @override
@@ -590,13 +595,33 @@ class _EntryCard extends StatelessWidget {
                   ],
                 ),
               ),
-              if (!selectionMode)
+              if (!selectionMode) ...[
+                IconButton(
+                  icon: Icon(Icons.person_outline,
+                      color: colors.textSecondary, size: 20),
+                  tooltip: 'Copy username',
+                  onPressed: onCopyUsername,
+                ),
+                IconButton(
+                  icon: Icon(Icons.key_outlined,
+                      color: colors.textSecondary, size: 20),
+                  tooltip: 'Copy password',
+                  onPressed: onCopyPassword,
+                ),
+                if (onOpenLink != null)
+                  IconButton(
+                    icon: Icon(Icons.open_in_new,
+                        color: colors.textSecondary, size: 20),
+                    tooltip: 'Open link',
+                    onPressed: onOpenLink,
+                  ),
                 IconButton(
                   icon:
                       Icon(Icons.edit_outlined, color: colors.accent, size: 20),
                   tooltip: 'Edit',
                   onPressed: onEdit,
                 ),
+              ],
               if (!selectionMode && entry.isPasswordDueForRotation)
                 Icon(Icons.warning_amber_rounded,
                     color: colors.warning, size: 20),

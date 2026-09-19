@@ -5,6 +5,7 @@ import 'package:firebase_core/firebase_core.dart';
 import 'firebase_options.dart';
 import 'core/session/vault_session.dart';
 import 'core/theme/theme_controller.dart';
+import 'core/utils/clipboard_cooldown_service.dart';
 import 'features/auth/master_password_service.dart';
 import 'features/auth/google_auth_service.dart';
 import 'ui/screens/google_signin_screen.dart';
@@ -13,10 +14,11 @@ import 'ui/screens/terms_screen.dart';
 import 'ui/screens/unlock_screen.dart';
 
 void main() async {
-  WidgetsFlutterBinding.ensureInitialized();
+    WidgetsFlutterBinding.ensureInitialized();
   await Firebase.initializeApp(
     options: DefaultFirebaseOptions.currentPlatform,
   );
+  await ClipboardCooldownService.init();
 
   runApp(
     MultiProvider(
