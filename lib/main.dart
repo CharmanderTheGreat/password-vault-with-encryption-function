@@ -14,7 +14,7 @@ import 'ui/screens/terms_screen.dart';
 import 'ui/screens/unlock_screen.dart';
 
 void main() async {
-    WidgetsFlutterBinding.ensureInitialized();
+  WidgetsFlutterBinding.ensureInitialized();
   await Firebase.initializeApp(
     options: DefaultFirebaseOptions.currentPlatform,
   );
@@ -292,7 +292,7 @@ class VaultColors extends ThemeExtension<VaultColors> {
 }
 
 class EntryRouter extends StatefulWidget {
-  const EntryRouter();
+  const EntryRouter({super.key});
 
   @override
   State<EntryRouter> createState() => EntryRouterState();

@@ -2,14 +2,11 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../../core/utils/app_launcher.dart';
 import '../../core/utils/clipboard_cooldown_service.dart';
-import 'package:file_picker/file_picker.dart';
 import '../../core/models/vault_entry.dart';
 import '../../core/database/vault_sync_service.dart';
 import '../../core/database/sync_queue_service.dart';
 import '../../core/session/vault_session.dart';
 import '../../core/theme/theme_controller.dart';
-import '../../features/import_export/csv_import_service.dart';
-import '../../features/import_export/csv_export_service.dart';
 import '../../main.dart' show VaultColors;
 import 'add_edit_entry_screen.dart';
 import 'settings_screen.dart';
@@ -161,6 +158,7 @@ class _VaultListScreenState extends State<VaultListScreen> {
     );
 
     if (confirmed != true) return;
+    if (!mounted) return;
 
     final repo = context.read<VaultSession>().repository!;
     await repo.deleteMultiple(_selectedIds.toList());
@@ -178,144 +176,12 @@ class _VaultListScreenState extends State<VaultListScreen> {
     if (uri == null) return;
 
     final launched = await AppLauncher.openUrl(uri.toString());
-    if (!launched && mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-            content: Text(
-                'Could not open the link. Check your internet connection.')),
-      );
-    }
-  }
-
-  Future<void> _importFromCsv() async {
-    final result = await FilePicker.platform.pickFiles(
-      type: FileType.custom,
-      allowedExtensions: ['csv'],
-      dialogTitle: 'Select browser password export (.csv)',
-    );
-
-    if (result == null || result.files.single.path == null) return;
-
-    List<VaultEntry> imported;
-    try {
-      imported = await CsvImportService.parseFile(result.files.single.path!);
-    } catch (e) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-            content:
-                Text('Import failed: ${e is FormatException ? e.message : e}')),
-      );
-      return;
-    }
-
-    if (imported.isEmpty) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('No valid entries found in that file.')),
-      );
-      return;
-    }
-
     if (!mounted) return;
-    final confirmed = await showDialog<bool>(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('Import accounts?'),
-        content: Text(
-          'Found ${imported.length} account${imported.length > 1 ? 's' : ''} in this file. '
-          'They\'ll be added to your vault and encrypted immediately. '
-          'Delete the CSV file afterward, it\'s stored as plain text by your browser.',
-        ),
-        actions: [
-          TextButton(
-              onPressed: () => Navigator.pop(context, false),
-              child: const Text('Cancel')),
-          TextButton(
-              onPressed: () => Navigator.pop(context, true),
-              child: const Text('Import')),
-        ],
-      ),
-    );
-
-    if (confirmed != true) return;
-
-    final repo = context.read<VaultSession>().repository!;
-    for (final entry in imported) {
-      await repo.addEntry(entry);
-    }
-
-    _loadEntries();
-
-    if (!mounted) return;
+    if (launched) return;
     ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-          content: Text(
-              'Imported ${imported.length} account${imported.length > 1 ? 's' : ''}.')),
-    );
-  }
-
-  Future<void> _exportToCsv() async {
-    if (_entries.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('No accounts to export yet.')),
-      );
-      return;
-    }
-
-    final confirmed = await showDialog<bool>(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('Export vault as CSV?'),
-        content: Text(
-          'This creates a plain-text file with all ${_entries.length} of your '
-          'saved passwords, unencrypted, same as a browser password export. '
-          'Store it somewhere safe and delete it when you\'re done.',
-        ),
-        actions: [
-          TextButton(
-              onPressed: () => Navigator.pop(context, false),
-              child: const Text('Cancel')),
-          TextButton(
-              onPressed: () => Navigator.pop(context, true),
-              child: const Text('Continue')),
-        ],
-      ),
-    );
-
-    if (confirmed != true) return;
-
-    final savePath = await FilePicker.platform.saveFile(
-      dialogTitle: 'Save vault export',
-      fileName: 'vault_export.csv',
-      type: FileType.custom,
-      allowedExtensions: ['csv'],
-    );
-
-    if (savePath == null) return;
-
-    final path =
-        savePath.toLowerCase().endsWith('.csv') ? savePath : '$savePath.csv';
-    await CsvExportService.exportToFile(_entries, path);
-
-    if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text('Exported ${_entries.length} accounts to $path')),
-    );
-  }
-
-  void _showAbout() {
-    showAboutDialog(
-      context: context,
-      applicationName: 'Password Vault',
-      applicationVersion: '1.0.0',
-      children: const [
-        Padding(
-          padding: EdgeInsets.only(top: 8),
-          child: Text(
-              'Offline, encrypted password manager. AES-256-GCM + Argon2id. No network access, ever.'),
-        ),
-      ],
+      const SnackBar(
+          content:
+              Text('Could not open the link. Check your internet connection.')),
     );
   }
 

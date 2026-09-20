@@ -21,7 +21,6 @@ class SettingsScreen extends StatefulWidget {
 }
 
 class _SettingsScreenState extends State<SettingsScreen> {
-  bool _quickUnlockEnabled = false;
   bool _quickUnlockSupported = false;
   bool _loadingQuickUnlock = true;
 
@@ -33,11 +32,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
   Future<void> _loadQuickUnlockStatus() async {
     final supported = await QuickUnlockService.isDeviceSupported();
-    final enabled = await QuickUnlockService.isEnabled();
     if (!mounted) return;
     setState(() {
       _quickUnlockSupported = supported;
-      _quickUnlockEnabled = enabled;
       _loadingQuickUnlock = false;
     });
   }
@@ -264,15 +261,16 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   ListTile(
                     contentPadding: EdgeInsets.zero,
                     leading: Icon(
-                      _quickUnlockEnabled
+                      _quickUnlockSupported
                           ? Icons.lock_outline
                           : Icons.lock_open_outlined,
-                      color:
-                          _quickUnlockEnabled ? colors.success : colors.warning,
+                      color: _quickUnlockSupported
+                          ? colors.success
+                          : colors.warning,
                     ),
                     title: const Text('Vault protection'),
                     subtitle: Text(
-                      _quickUnlockEnabled
+                      _quickUnlockSupported
                           ? 'Protected by this device\'s lock screen'
                           : 'No device lock screen found, vault opens with no prompt',
                       style:

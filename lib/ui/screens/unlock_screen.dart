@@ -4,7 +4,6 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:cryptography/cryptography.dart';
 import '../../features/auth/vault_access_service.dart';
-import '../../features/auth/google_auth_service.dart';
 import '../../core/database/vault_sync_service.dart';
 import '../../core/database/sync_queue_service.dart';
 import '../../core/session/vault_session.dart';
