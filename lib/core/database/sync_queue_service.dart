@@ -11,8 +11,8 @@ import 'database_helper.dart';
 /// action as the local save — the local save itself never depends on
 /// network access, so add/edit/delete always work offline. The queue
 /// is then flushed opportunistically:
-///  - immediately after the change is made (best-effort, in case
-///    there's internet right now)
+///  - immediately after the change is made (fire-and-forget, in case
+///    there's internet right now — never awaited by the caller)
 ///  - on every unlock (VaultAccessService / UnlockScreen)
 ///  - on every manual pull-to-refresh (VaultListScreen)
 ///
@@ -46,6 +46,11 @@ class SyncQueueService {
   /// around — whatever's left stays queued and gets retried in full
   /// next time this runs. Safe to call often; it's a no-op if the
   /// queue is empty or nobody's signed in.
+  ///
+  /// Each Firestore call has an 8s timeout — without it, a `.set()`/
+  /// `.delete()` call with no internet hangs indefinitely instead of
+  /// failing, which would stall anything that awaits this method
+  /// (unlock, pull-to-refresh) while offline.
   static Future<void> flushPendingChanges() async {
     final uid = FirebaseAuth.instance.currentUser?.uid;
     if (uid == null) return;
@@ -68,19 +73,27 @@ class SyncQueueService {
         if (operation == 'upsert') {
           final payload =
               jsonDecode(item['payload'] as String) as Map<String, dynamic>;
-          await collection.doc(entryId).set(payload);
+          await collection
+              .doc(entryId)
+              .set(payload)
+              .timeout(const Duration(seconds: 8));
         } else if (operation == 'delete') {
-          await collection.doc(entryId).delete();
+          await collection
+              .doc(entryId)
+              .delete()
+              .timeout(const Duration(seconds: 8));
         }
-        await db.delete('sync_queue', where: 'queue_id = ?', whereArgs: [queueId]);
+        await db
+            .delete('sync_queue', where: 'queue_id = ?', whereArgs: [queueId]);
       } catch (e) {
         debugPrint(
             '*** SyncQueueService.flushPendingChanges: stopped at entry $entryId ($operation) — $e ***');
-        return; // likely offline — leave the rest queued, retry later
+        return; // likely offline (or timed out) — leave the rest queued, retry later
       }
     }
 
-    debugPrint('*** SyncQueueService.flushPendingChanges: queue fully drained ***');
+    debugPrint(
+        '*** SyncQueueService.flushPendingChanges: queue fully drained ***');
   }
 
   /// How many changes are still waiting to reach the cloud. Exposed in

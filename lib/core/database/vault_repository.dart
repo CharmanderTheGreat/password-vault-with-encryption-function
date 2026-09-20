@@ -1,3 +1,4 @@
+import 'dart:async' show unawaited;
 import 'package:flutter/foundation.dart' show debugPrint;
 import 'package:cryptography/cryptography.dart';
 import 'package:uuid/uuid.dart';
@@ -36,8 +37,10 @@ class VaultRepository {
     // right now.
     await db.insert('vault_entries', row);
     await SyncQueueService.enqueueUpsert(id, row);
-    await SyncQueueService
-        .flushPendingChanges(); // best-effort, doesn't block on failure
+    // Fire-and-forget: the caller (UI) must not wait on this. Firestore
+    // hangs indefinitely with no internet rather than failing fast, so
+    // awaiting it here would freeze the "Save" flow while offline.
+    unawaited(SyncQueueService.flushPendingChanges());
 
     return id;
   }
@@ -107,14 +110,14 @@ class VaultRepository {
       ...row,
       'created_at': entry.createdAt.toIso8601String(),
     });
-    await SyncQueueService.flushPendingChanges();
+    unawaited(SyncQueueService.flushPendingChanges());
   }
 
   Future<void> deleteEntry(String id) async {
     final db = await DatabaseHelper.database;
     await db.delete('vault_entries', where: 'id = ?', whereArgs: [id]);
     await SyncQueueService.enqueueDelete(id);
-    await SyncQueueService.flushPendingChanges();
+    unawaited(SyncQueueService.flushPendingChanges());
   }
 
   Future<void> deleteMultiple(List<String> ids) async {
@@ -130,7 +133,7 @@ class VaultRepository {
     for (final id in ids) {
       await SyncQueueService.enqueueDelete(id);
     }
-    await SyncQueueService.flushPendingChanges();
+    unawaited(SyncQueueService.flushPendingChanges());
   }
 
   Future<bool> _hasPasswordChanged(VaultEntry updatedEntry) async {
