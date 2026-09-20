@@ -1,5 +1,4 @@
 import 'dart:io';
-import 'package:flutter/foundation.dart' show debugPrint;
 import 'package:path/path.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
@@ -30,11 +29,6 @@ class DatabaseHelper {
     final directory = await getApplicationDocumentsDirectory();
     final path = join(directory.path, 'vault.db');
 
-    // TEMPORARY debug log — this should ONLY ever print when the user
-    // explicitly signs out. If it shows up any other time, that's the
-    // smoking gun for any "vault empties unexpectedly" bug.
-    debugPrint('*** resetLocalData() CALLED — wiping $path ***');
-
     if (_db != null) {
       await _db!.close();
       _db = null;
@@ -54,33 +48,20 @@ class DatabaseHelper {
 
     final directory = await getApplicationDocumentsDirectory();
     final path = join(directory.path, 'vault.db');
-    final alreadyExisted = await File(path).exists();
-
-    debugPrint(
-        '*** DatabaseHelper opening: $path (existed before open: $alreadyExisted) ***');
 
     final db = await openDatabase(
       path,
       version: _dbVersion,
       onCreate: (db, version) async {
-        debugPrint(
-            '*** DatabaseHelper onCreate FIRED — creating fresh tables at $path ***');
         await _createVaultEntriesTable(db);
         await _createSyncQueueTable(db);
       },
       onUpgrade: (db, oldVersion, newVersion) async {
-        debugPrint(
-            '*** DatabaseHelper onUpgrade FIRED — $oldVersion -> $newVersion at $path ***');
         if (oldVersion < 2) {
           await _createSyncQueueTable(db);
         }
       },
     );
-
-    final countResult =
-        await db.rawQuery('SELECT COUNT(*) AS c FROM vault_entries');
-    debugPrint(
-        '*** DatabaseHelper opened $path — vault_entries row count: ${countResult.first['c']} ***');
 
     return db;
   }

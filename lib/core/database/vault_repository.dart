@@ -49,9 +49,6 @@ class VaultRepository {
     final db = await DatabaseHelper.database;
     final rows = await db.query('vault_entries', orderBy: 'label ASC');
 
-    debugPrint(
-        '*** VaultRepository.getAllEntries: db.query returned ${rows.length} raw rows ***');
-
     final entries = <VaultEntry>[];
     for (final row in rows) {
       try {
@@ -60,12 +57,9 @@ class VaultRepository {
         // If a single entry fails to decrypt (e.g. wrong key), skip
         // just that one and keep going instead of losing the whole list.
         debugPrint(
-            '*** VaultRepository.getAllEntries: FAILED to decrypt row id=${row['id']} label=${row['label']}: $e ***');
+            'VaultRepository.getAllEntries: failed to decrypt row id=${row['id']} label=${row['label']}: $e');
       }
     }
-
-    debugPrint(
-        '*** VaultRepository.getAllEntries: returning ${entries.length} successfully-decrypted entries ***');
 
     return entries;
   }

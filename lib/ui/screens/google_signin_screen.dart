@@ -35,10 +35,6 @@ class _GoogleSignInScreenState extends State<GoogleSignInScreen> {
 
       widget.onSignedIn();
     } catch (e, stack) {
-      // TEMPORARY: prints the real error to the terminal (VS Code Debug
-      // Console) so we can see what's actually failing under the hood.
-      // The UI message stays generic on purpose — remove these two
-      // debugPrint lines once the real cause is found and fixed.
       debugPrint('Google sign-in failed: $e');
       debugPrint('$stack');
       if (!mounted) return;
