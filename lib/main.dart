@@ -4,6 +4,7 @@ import 'package:provider/provider.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'firebase_options.dart';
 import 'core/session/vault_session.dart';
+import 'core/theme/color_palette.dart';
 import 'core/theme/theme_controller.dart';
 import 'core/utils/clipboard_cooldown_service.dart';
 import 'features/auth/master_password_service.dart';
@@ -37,7 +38,7 @@ class PasswordVaultApp extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final themeController = context.watch<ThemeController>();
-    final currentTheme = _buildTheme(
+    final currentTheme = _buildTheme(themeController.palette,
         themeController.isDark ? Brightness.dark : Brightness.light);
 
     return MaterialApp(
@@ -54,27 +55,23 @@ class PasswordVaultApp extends StatelessWidget {
     );
   }
 
-  ThemeData _buildTheme(Brightness brightness) {
+  ThemeData _buildTheme(AppPalette palette, Brightness brightness) {
     final isDark = brightness == Brightness.dark;
+    final tone = isDark ? palette.dark : palette.light;
 
-    // Matched to the app icon: deep navy-purple background with a
-    // gold/amber accent ring. Light mode keeps the same hue family
-    // (lavender-tinted neutrals, gold accent) just lightened and
-    // rebalanced for contrast on a bright background.
-    final background =
-        isDark ? const Color(0xFF16112A) : const Color(0xFFD6C2EC);
-    final surface = isDark ? const Color(0xFF221A3B) : const Color(0xFFE3D3F5);
-    final surfaceVariant =
-        isDark ? const Color(0xFF2D2350) : const Color(0xFFC7AEE3);
+    // The palette supplies the brand-identity colors (background,
+    // surface, accent, text). Status colors (danger/warning/success)
+    // intentionally stay the same across every palette, so they're
+    // always recognizable regardless of which theme is selected.
+    final background = tone.background;
+    final surface = tone.surface;
+    final surfaceVariant = tone.surfaceVariant;
 
-    final accent = isDark ? const Color(0xFFD9AD6B) : const Color(0xFF8A5D26);
-    final accentMuted =
-        isDark ? const Color(0xFFE8C68F) : const Color(0xFFA1732F);
+    final accent = tone.accent;
+    final accentMuted = tone.accentMuted;
 
-    final textPrimary =
-        isDark ? const Color(0xFFEDE9F5) : const Color(0xFF201431);
-    final textSecondary =
-        isDark ? const Color(0xFFA79BC4) : const Color(0xFF52406E);
+    final textPrimary = tone.textPrimary;
+    final textSecondary = tone.textSecondary;
     final danger = isDark ? const Color(0xFFEF4444) : const Color(0xFFDC2626);
     final warning = isDark ? const Color(0xFFF59E0B) : const Color(0xFFD97706);
     final success = isDark ? const Color(0xFF22C55E) : const Color(0xFF16A34A);

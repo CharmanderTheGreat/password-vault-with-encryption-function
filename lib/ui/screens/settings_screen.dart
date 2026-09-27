@@ -8,6 +8,8 @@ import '../../features/auth/quick_unlock_service.dart';
 import '../../features/auth/vault_access_service.dart';
 import '../../features/import_export/csv_import_service.dart';
 import '../../features/import_export/csv_export_service.dart';
+import '../../core/theme/color_palette.dart';
+import '../../core/theme/theme_controller.dart';
 import '../../main.dart' show VaultColors, EntryRouter;
 import '../widgets/responsive_container.dart';
 
@@ -241,6 +243,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
   @override
   Widget build(BuildContext context) {
     final colors = Theme.of(context).extension<VaultColors>()!;
+    final themeController = context.watch<ThemeController>();
 
     return Scaffold(
       appBar: AppBar(title: const Text('Settings')),
@@ -277,6 +280,63 @@ class _SettingsScreenState extends State<SettingsScreen> {
                           TextStyle(color: colors.textSecondary, fontSize: 12),
                     ),
                   ),
+              ],
+            ),
+            const SizedBox(height: 24),
+            const _SectionHeader('APPEARANCE'),
+            _SettingsCard(
+              children: [
+                Padding(
+                  padding: const EdgeInsets.symmetric(vertical: 12),
+                  child: Wrap(
+                    spacing: 14,
+                    runSpacing: 14,
+                    children: kAppPalettes.map((palette) {
+                      final selected = palette.id == themeController.palette.id;
+                      return GestureDetector(
+                        onTap: () =>
+                            context.read<ThemeController>().setPalette(palette),
+                        child: Column(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Container(
+                              width: 44,
+                              height: 44,
+                              decoration: BoxDecoration(
+                                color: palette.swatchColor,
+                                shape: BoxShape.circle,
+                                border: Border.all(
+                                  color: selected
+                                      ? colors.textPrimary
+                                      : Colors.transparent,
+                                  width: 2.5,
+                                ),
+                              ),
+                              child: selected
+                                  ? Icon(Icons.check,
+                                      color: palette.dark.background, size: 20)
+                                  : null,
+                            ),
+                            const SizedBox(height: 4),
+                            SizedBox(
+                              width: 60,
+                              child: Text(
+                                palette.label,
+                                textAlign: TextAlign.center,
+                                maxLines: 2,
+                                overflow: TextOverflow.ellipsis,
+                                style: TextStyle(
+                                  fontSize: 10,
+                                  color: colors.textSecondary,
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
+                      );
+                    }).toList(),
+                  ),
+                ),
               ],
             ),
             const SizedBox(height: 24),
